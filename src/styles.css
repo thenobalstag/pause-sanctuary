@@ -859,3 +859,26 @@
     font-size:20px;
   }
 }
+
+/* PAUSE: homepage explanation */
+.hero-explanation{
+  max-width:680px;
+  margin:10px auto 18px;
+  color:rgba(232,224,210,.72);
+  font-size:13px;
+  line-height:1.8;
+  letter-spacing:.01em;
+}
+
+.hero h2 + .hero-explanation{
+  margin-top:4px;
+}
+
+@media(max-width:760px){
+  .hero-explanation{
+    max-width:92%;
+    font-size:12px;
+    line-height:1.7;
+    margin:8px auto 16px;
+  }
+}
