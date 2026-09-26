@@ -784,3 +784,25 @@
     padding:30px 22px;
   }
 }
+
+/* PAUSE: 5-minute reset progress */
+.reset-progress{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  margin-top:-4px;
+}
+
+.reset-progress span{
+  width:34px;
+  height:3px;
+  border-radius:999px;
+  background:#3c3428;
+  transition:background .5s ease,transform .5s ease;
+}
+
+.reset-progress span.active{
+  background:#C9A96A;
+  transform:scaleY(1.35);
+}
