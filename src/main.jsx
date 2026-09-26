@@ -1,0 +1,387 @@
+﻿import React, {useEffect, useMemo, useRef, useState} from "react";
+import {createRoot} from "react-dom/client";
+import {Menu, X, ArrowLeft, Volume2, VolumeX, Pause, Play, SkipForward, Trash2, Share2, Check, ExternalLink} from "lucide-react";
+import "./styles.css";
+
+const C={bg:"#171717",panel:"#1D1B18",panel2:"#232019",text:"#F5F1E8",beige:"#D8CDBD",gold:"#C9A96A",dim:"#8a8378"};
+
+const SOUNDS=[
+["rain","\uD83C\uDF27\uFE0F","Rain"],
+["ocean","\uD83C\uDF0A","Ocean"],
+["fire","\uD83D\uDD25","Fireplace"],
+["wind","\uD83C\uDF2C\uFE0F","Wind"],
+["forest","\uD83C\uDF32","Forest"],
+["cafe","\u2615\uFE0F","Cafe"],
+["piano","\uD83C\uDFB9","Piano"],
+["violin","\uD83C\uDFBB","Violin"],
+["lofi","\uD83C\uDF9A\uFE0F","Lo-fi Bass"],
+["flute","\uD83E\uDE88","Flute"],
+["ambient","\uD83C\uDFB5","Ambient"]
+].map(([id,emoji,name])=>({id,emoji,name}));
+
+const REAL_AUDIO={
+ rain:"https://assets.mixkit.co/active_storage/sfx/2394/2394-preview.mp3",
+ forest:"https://assets.mixkit.co/active_storage/sfx/1213/1213-preview.mp3",
+ cafe:"https://assets.mixkit.co/active_storage/sfx/444/444-preview.mp3",
+ night:"https://assets.mixkit.co/active_storage/sfx/1789/1789-preview.mp3",
+ ocean:"/Audio/ocean.mp3",
+ fire:"/Audio/campfire.mp3",
+ lofi:"/Audio/lofi-bass.mp3"
+};
+
+const ENV=[
+ {id:"rainy",name:"Rainy Evening",desc:"Rain against a quiet window.",line:"Let the rain do the talking.",sounds:{rain:80,thunder:15,fire:40,piano:20}},
+ {id:"ocean",name:"Ocean After Dark",desc:"Slow waves under a moonlit sky.",line:"Let the tide carry it away.",sounds:{ocean:75,wind:30,ambient:25}},
+ {id:"forest",name:"Quiet Forest",desc:"A peaceful forest with subtle movement.",line:"Let the trees hold the quiet.",sounds:{forest:60,wind:35,ambient:20}},
+ {id:"fire",name:"The Fireplace",desc:"A warm room with a slowly burning fire.",line:"Stay a while. It's warm here.",sounds:{fire:70,rain:30,ambient:15}},
+ {id:"night",name:"Night Sky",desc:"A dark sky filled with stars.",line:"Let the sky be big enough.",sounds:{wind:25,piano:30,ambient:35}},
+ {id:"cafe",name:"Quiet CafÃ©",desc:"A cozy cafÃ© during a rainy evening.",line:"No one is waiting for you here.",sounds:{cafe:55,rain:55,piano:20}},
+ {id:"drive",name:"Night Drive",desc:"A peaceful nighttime drive.",line:"Just the road and the rain.",sounds:{rain:55,ambient:30,lofi:15}},
+ {id:"monsoon",name:"Monsoon Balcony",desc:"A peaceful monsoon evening.",line:"Let the monsoon take the weight.",sounds:{rain:90,wind:40,flute:15}},
+ {id:"moon",name:"Moonlit Room",desc:"A soft room lit by the moon.",line:"Nothing else needs you tonight.",sounds:{rain:45,wind:25,ambient:30,flute:10}}
+];
+
+const FEELINGS=[
+ ["stressed","Stressed","ðŸ˜°","rainy",5,"calm"],["overwhelmed","Overwhelmed","ðŸ˜µ","forest",5,null],
+ ["overthinking","Can't stop thinking","ðŸ§ ","night",10,"calm"],["tired","Tired","ðŸ˜´","fire",10,null],
+ ["low","Low","ðŸ˜”","rainy",10,null],["bored","Bored","ðŸ˜","ocean",5,null],
+ ["workbreak","Need a work break","ðŸ’¼","cafe",10,"calm"],["sleep","Getting ready for sleep","ðŸŒ™","moon",20,"sleep"],
+ ["peace","I just want some peace","ðŸ˜Š","ocean",10,"calm"]
+].map(([id,label,emoji,env,duration,breathing])=>({id,label,emoji,env,duration,breathing}));
+
+const patterns={calm:[["INHALE",4],["HOLD",4],["EXHALE",6]],sleep:[["INHALE",4],["HOLD",7],["EXHALE",8]]};
+
+function useAudio(){
+ const ref=useRef(null);
+ const init=()=>{
+  if(ref.current)return ref.current;
+  const Ctx=window.AudioContext||window.webkitAudioContext;
+  const ctx=new Ctx();
+  const master=ctx.createGain(); master.gain.value=.34; master.connect(ctx.destination);
+  const noiseBuffer=ctx.createBuffer(1,ctx.sampleRate*4,ctx.sampleRate);
+  const data=noiseBuffer.getChannelData(0);
+  let last=0;
+  for(let i=0;i<data.length;i++){
+   last=(last*.985)+(Math.random()*2-1)*.015;
+   data[i]=last;
+  }
+  const tracks={}, muted={value:false};
+  const ramp=(g,v,time=.8)=>{g.gain.cancelScheduledValues(ctx.currentTime);g.gain.setTargetAtTime(v,ctx.currentTime,time);};
+  const makeNoise=(filterType,frequency,q=0.4)=>{
+   const src=ctx.createBufferSource(); src.buffer=noiseBuffer; src.loop=true;
+   const filter=ctx.createBiquadFilter(); filter.type=filterType; filter.frequency.value=frequency; filter.Q.value=q;
+   const gain=ctx.createGain(); gain.gain.value=0;
+   src.connect(filter); filter.connect(gain); gain.connect(master); src.start();
+   return {src,filter,gain};
+  };
+  const ensure=(id)=>{
+   if(tracks[id])return tracks[id];
+   if(REAL_AUDIO[id]){
+    const el=new Audio(REAL_AUDIO[id]); el.loop=true; el.preload='auto'; el.crossOrigin='anonymous'; el.volume=.22;
+    tracks[id]={kind:'real',el}; return tracks[id];
+   }
+   let t={kind:'synth',gain:null,stopExtra:()=>{}};
+   if(id==='violin'){
+    const gain=ctx.createGain(); gain.gain.value=0; gain.connect(master);
+    const notes=[196,220,246.94,293.66,329.63,293.66,246.94,220];
+    let step=0;
+    const playNote=()=>{
+     if(!t.running)return;
+     const now=ctx.currentTime;
+     const o=ctx.createOscillator();
+     const g=ctx.createGain();
+     const filter=ctx.createBiquadFilter();
+     o.type='sawtooth';
+     o.frequency.value=notes[step%notes.length];
+     filter.type='lowpass';
+     filter.frequency.value=1200;
+     filter.Q.value=.3;
+     o.connect(filter);
+     filter.connect(g);
+     g.connect(gain);
+     g.gain.setValueAtTime(.0001,now);
+     g.gain.exponentialRampToValueAtTime(.42,now+.7);
+     g.gain.exponentialRampToValueAtTime(.12,now+2.8);
+     g.gain.exponentialRampToValueAtTime(.0001,now+4.2);
+     o.start(now);
+     o.stop(now+4.5);
+     step++;
+    };
+    t.gain=gain;
+    t.running=false;
+    t.startExtra=()=>{t.running=true;playNote();t.timer=setInterval(playNote,3200)};
+    t.stopExtra=()=>{t.running=false;clearInterval(t.timer)};
+   }else if(id==='lofi'){
+    const gain=ctx.createGain(); gain.gain.value=0; gain.connect(master);
+    const notes=[65.41,73.42,82.41,73.42];
+    let step=0;
+    const playBass=()=>{
+     if(!t.running)return;
+     const now=ctx.currentTime;
+     const o=ctx.createOscillator();
+     const g=ctx.createGain();
+     const filter=ctx.createBiquadFilter();
+     o.type='triangle';
+     o.frequency.value=notes[step%notes.length];
+     filter.type='lowpass';
+     filter.frequency.value=420;
+     filter.Q.value=.5;
+     o.connect(filter);
+     filter.connect(g);
+     g.connect(gain);
+     g.gain.setValueAtTime(.0001,now);
+     g.gain.exponentialRampToValueAtTime(.18,now+.08);
+     g.gain.exponentialRampToValueAtTime(.06,now+1.5);
+     g.gain.exponentialRampToValueAtTime(.0001,now+2.4);
+     o.start(now);
+     o.stop(now+2.6);
+     step++;
+    };
+    t.gain=gain;
+    t.running=false;
+    t.startExtra=()=>{t.running=true;playBass();t.timer=setInterval(playBass,1800)};
+    t.stopExtra=()=>{t.running=false;clearInterval(t.timer)};
+   }else if(id==='flute'){
+    const gain=ctx.createGain(); gain.gain.value=0; gain.connect(master);
+    const notes=[392,440,493.88,523.25,493.88,440,392];
+    let step=0;
+    const playFlute=()=>{
+     if(!t.running)return;
+     const now=ctx.currentTime;
+     const o=ctx.createOscillator();
+     const g=ctx.createGain();
+     const filter=ctx.createBiquadFilter();
+     o.type='sine';
+     o.frequency.value=notes[step%notes.length];
+     filter.type='lowpass';
+     filter.frequency.value=2400;
+     filter.Q.value=.15;
+     o.connect(filter);
+     filter.connect(g);
+     g.connect(gain);
+     g.gain.setValueAtTime(.0001,now);
+     g.gain.exponentialRampToValueAtTime(.40,now+.35);
+     g.gain.exponentialRampToValueAtTime(.14,now+1.7);
+     g.gain.exponentialRampToValueAtTime(.0001,now+3.2);
+     o.start(now);
+     o.stop(now+3.5);
+     step++;
+    };
+    t.gain=gain;
+    t.running=false;
+    t.startExtra=()=>{t.running=true;playFlute();t.timer=setInterval(playFlute,2500)};
+    t.stopExtra=()=>{t.running=false;clearInterval(t.timer)};
+   }else if(id==='piano'){
+    const gain=ctx.createGain(); gain.gain.value=0; gain.connect(master);
+    const melody=[261.63,329.63,392.00,329.63,293.66,349.23,440.00,349.23];
+    const bass=[130.81,146.83,164.81,146.83];
+    let step=0;
+    const playPhrase=()=>{
+     if(!t.running)return;
+     const now=ctx.currentTime;
+     const freq=melody[step%melody.length];
+     const o=ctx.createOscillator();
+     const g=ctx.createGain();
+     const filter=ctx.createBiquadFilter();
+     o.type='triangle';
+     o.frequency.value=freq;
+     filter.type='lowpass';
+     filter.frequency.value=1800;
+     filter.Q.value=.25;
+     o.connect(filter);
+     filter.connect(g);
+     g.connect(gain);
+     g.gain.setValueAtTime(.0001,now);
+     g.gain.exponentialRampToValueAtTime(.55,now+.18);
+     g.gain.exponentialRampToValueAtTime(.16,now+1.3);
+     g.gain.exponentialRampToValueAtTime(.0001,now+2.8);
+     o.start(now);
+     o.stop(now+3);
+     if(step%2===0){
+      const b=ctx.createOscillator();
+      const bg=ctx.createGain();
+      b.type='sine';
+      b.frequency.value=bass[Math.floor(step/2)%bass.length];
+      b.connect(bg);
+      bg.connect(gain);
+      bg.gain.setValueAtTime(.0001,now);
+      bg.gain.exponentialRampToValueAtTime(.045,now+.25);
+      bg.gain.exponentialRampToValueAtTime(.0001,now+2.6);
+      b.start(now);
+      b.stop(now+2.8);
+     }
+     step++;
+    };
+    t.gain=gain;
+    t.running=false;
+    t.startExtra=()=>{t.running=true;playPhrase();t.timer=setInterval(playPhrase,2200)};
+    t.stopExtra=()=>{t.running=false;clearInterval(t.timer)};
+   }else if(id==='ambient'){
+    const gain=ctx.createGain();gain.gain.value=0;gain.connect(master);
+    const oscillators=[];
+    [174.61,220].forEach((freq,i)=>{
+     const o=ctx.createOscillator();
+     o.type='sine';
+     o.frequency.value=freq;
+     o.detune.value=i?5:-5;
+     o.connect(gain);
+     o.start();
+     oscillators.push(o);
+    });
+    const lfo=ctx.createOscillator();
+    const lg=ctx.createGain();
+    lfo.frequency.value=.055;
+    lg.gain.value=.018;
+    lfo.connect(lg);
+    lg.connect(gain.gain);
+    lfo.start();
+    t.gain=gain;
+    t.stopExtra=()=>{
+     oscillators.forEach(o=>{try{o.stop()}catch{}});
+     try{lfo.stop()}catch{}
+     t.running=false;
+    };
+   }else if(id==='wind'){
+    const n=makeNoise('bandpass',520,.35),lfo=ctx.createOscillator(),lg=ctx.createGain();lfo.frequency.value=.07;lg.gain.value=.055;lfo.connect(lg);lg.connect(n.gain);lfo.start();t={...t,gain:n.gain,stopExtra:()=>{}};
+   }else if(id==='road'){
+    const n=makeNoise('lowpass',520,.3);
+    const rumble=ctx.createBiquadFilter();
+    rumble.type='lowpass';
+    rumble.frequency.value=650;
+    rumble.Q.value=.35;
+    n.filter.disconnect();
+    n.filter.connect(rumble);
+    const gainBoost=ctx.createGain();
+    gainBoost.gain.value=.9;
+    rumble.connect(gainBoost);
+    gainBoost.connect(master);
+    const lfo=ctx.createOscillator();
+    const lg=ctx.createGain();
+    lfo.frequency.value=.025;
+    lg.gain.value=.08;
+    lfo.connect(lg);
+    lg.connect(n.gain);
+    lfo.start();
+    t={...t,gain:n.gain,stopExtra:()=>{}};
+   }else if(id==='brown'){
+    const n=makeNoise('lowpass',340,.22);
+    const warmth=ctx.createBiquadFilter();
+    warmth.type='lowpass';
+    warmth.frequency.value=420;
+    warmth.Q.value=.18;
+    n.filter.disconnect();
+    n.filter.connect(warmth);
+    const boost=ctx.createGain();
+    boost.gain.value=1.4;
+    warmth.connect(boost);
+    boost.connect(master);
+    t.gain=n.gain;
+   }else if(id==='thunder'){
+    const n=makeNoise('lowpass',95,.1),lfo=ctx.createOscillator(),lg=ctx.createGain();lfo.frequency.value=.018;lg.gain.value=.07;lfo.connect(lg);lg.connect(n.gain);lfo.start();t={...t,gain:n.gain,stopExtra:()=>{}};
+   }else{
+    const n=makeNoise('lowpass',1000,.2);t.gain=n.gain;
+   }
+   tracks[id]=t;return t;
+  };
+  const start=(id,v)=>{if(v<=0){stop(id);return;}const t=ensure(id);const level=Math.max(0,Math.min(1,v/100));if(t.kind==='real'){t.el.volume=level*.28;t.el.muted=muted.value;if(t.el.paused)t.el.play().catch(()=>{});}else{if(ctx.state==='suspended')ctx.resume();if(t.startExtra&&!t.running)t.startExtra();ramp(t.gain,level*(t.maxGain??.11),.9)}};
+  const stop=(id)=>{const t=tracks[id];if(!t)return;if(t.kind==='real'){t.el.pause();try{t.el.currentTime=0}catch{}}else{ramp(t.gain,0,.8);t.stopExtra?.();t.running=false}};
+  const vol=(id,v)=>{if(v<=0){stop(id);return;}const t=tracks[id];if(!t)return;if(t.kind==='real')t.el.volume=Math.max(0,Math.min(1,v/100*.28));else ramp(t.gain,Math.max(0,Math.min(1,v/100))*(t.maxGain??.11),.35)};
+  const stopAll=()=>Object.keys(tracks).forEach(stop);
+  const mute=(m)=>{muted.value=m;Object.values(tracks).forEach(t=>{if(t.kind==='real')t.el.muted=m;});master.gain.setTargetAtTime(m?0:.34,ctx.currentTime,.45)};
+  ref.current={start,stop,stopAll,vol,mute};return ref.current;
+ };
+ useEffect(()=>()=>{try{ref.current?.stopAll()}catch{}},[]);
+ return init;
+}
+function Btn({children,onClick,ghost=false,disabled=false}){return <button disabled={disabled} onClick={onClick} className={"btn "+(ghost?"ghost":"")} >{children}</button>}
+function Nav({go,view}){const[open,setOpen]=useState(false);const links=[["explore","Explore"],["soundscape","Soundscape"],["reset","Reset"],["sleep","Sleep"],["games","Play"],["unload","Unload"],["about","About"],["privacy","Privacy"]];return <nav className="nav"><button className="logo" onClick={()=>go("home")}>PAUSE</button><div className="nav-tag">A small place to breathe.</div><div className="desktop-nav">{links.map(([id,l])=><button className={view===id?"navlink active":"navlink"} key={id} onClick={()=>go(id)}>{l}</button>)}<Btn onClick={()=>go("feelings")}>Find my calm</Btn></div><button className="mobile-menu" onClick={()=>setOpen(!open)}>{open?<X/>:<Menu/>}</button>{open&&<div className="mobile-panel">{[...links,["feelings","Find my calm"]].map(([id,l])=><button key={id} onClick={()=>{setOpen(false);go(id)}}>{l}</button>)}</div>}</nav>}
+function Footer({go}){return <footer><div className="logo small">PAUSE</div><p>A small place to breathe.</p><div className="footer-links">{["explore","reset","soundscape","sleep","games","unload","about","privacy"].map(x=><button key={x} onClick={()=>go(x)}>{x[0].toUpperCase()+x.slice(1)}</button>)}</div></footer>}
+
+function Scene({type="home"}){const stars=useMemo(()=>Array.from({length:type==="night"?90:30},(_,i)=>({l:Math.random()*100,t:Math.random()*72,s:1+Math.random()*2,d:2+Math.random()*6})),[type]);return <div className={"scene "+type} aria-hidden="true"><div className="scene-vignette"/>{(type==="rainy"||type==="monsoon"||type==="cafe"||type==="moon")&&<div className="rain">{Array.from({length:55},(_,i)=><i key={i} style={{left:(i*37)%100+"%",animationDelay:-Math.random()*2+"s"}}/>)}</div>}{(type==="night"||type==="ocean"||type==="moon"||type==="drive")&&<div className="stars">{stars.map((s,i)=><i key={i} style={{left:s.l+"%",top:s.t+"%",width:s.s,height:s.s,animationDuration:s.d+"s"}}/>)}</div>}{type==="ocean"&&<div className="water-lines"><i/><i/><i/></div>}{type==="fire"&&<div className="fireplace-visual"><span/><span/><span/></div>}{type==="cafe"&&<div className="window-grid"><i/><i/><i/><i/></div>}{type==="drive"&&<div className="road-lights"><i/><i/><i/><i/><i/></div>}<div className="moon-orb"/><div className="glow"/></div>}
+function ShareButton(){const[shared,setShared]=useState(false);const share=async()=>{const data={title:"PAUSE â€” A Small Place to Breathe",text:"Take a quiet moment with PAUSE.",url:window.location.origin};try{if(navigator.share){await navigator.share(data);}else{await navigator.clipboard.writeText(window.location.href);setShared(true);setTimeout(()=>setShared(false),1800)}}catch{}};return <button className="share-button" onClick={share}><span>{shared?<Check/>:<Share2/>}</span>{shared?"Link copied":"Share PAUSE"}</button>}
+
+function Home({go}){return <div className="page"><Scene/><Nav go={go} view="home"/><main className="hero"><h1>Take a moment.</h1><h2>Nothing is required of you.</h2><p>Let the noise fade. Stay for a breath, a sound, or a few quiet minutes.</p><div className="actions"><Btn onClick={()=>go("feelings")}>Find my calm</Btn><Btn ghost onClick={()=>go("explore")}>Explore spaces â†’</Btn></div><ShareButton/><span className="micro">No account. No pressure. Just pause.</span></main><Footer go={go}/></div>}
+
+function Feelings({go,start}){const[selected,setSelected]=useState(null);const f=FEELINGS.find(x=>x.id===selected),e=f&&ENV.find(x=>x.id===f.env);return <div className="page"><Nav go={go} view="feelings"/><main className="content"><h1>How are you feeling right now?</h1><p className="sub">Take a breath. Choose whatever fits.</p><div className="cards">{FEELINGS.map(x=><button className={"feeling "+(selected===x.id?"selected":"")} key={x.id} onClick={()=>setSelected(x.id)}><span>{x.emoji}</span><b>{x.label}</b></button>)}</div>{f&&e&&<section className="recommend"><p className="serif">{f.id==="stressed"?"Let's slow things down.":f.id==="overthinking"?"Let the thoughts drift past.":"Let's find a little space."}</p><small>Recommended for you</small><h2>{e.name}</h2><p>{f.duration}-minute reset Â· {f.breathing?"Breathing included":"Breathing optional"}</p><Btn onClick={()=>start(e.id,f.duration,f.breathing)}>Begin</Btn></section>}</main><Footer go={go}/></div>}
+
+function Explore({go,start}){return <div className="page"><Nav go={go} view="explore"/><main className="content"><h1>Choose your escape.</h1><p className="sub">Stay as long as you need.</p><div className="envgrid">{ENV.filter(x=>x.id!=="moon").map(e=><button className="envcard" key={e.id} onClick={()=>start(e.id)}><Scene type={e.id}/><div><h2>{e.name}</h2><em>{e.line}</em><p>{e.desc}</p><small>{Object.keys(e.sounds).map(id=>SOUNDS.find(s=>s.id===id).name).join(" Â· ")}</small><b>â†’ ENTER</b></div></button>)}</div></main><Footer go={go}/></div>}
+
+function Timer({minutes,onDone}){const [remaining,setRemaining]=useState(minutes*60);const [running,setRunning]=useState(true);useEffect(()=>{if(!running)return;const end=Date.now()+remaining*1000;const id=setInterval(()=>{const r=Math.max(0,(end-Date.now())/1000);setRemaining(r);if(r<=0){clearInterval(id);setRunning(false);onDone?.()}},250);return()=>clearInterval(id)},[running]);return <div className="timer"><b>{Math.floor(remaining/60)+":"+String(Math.floor(remaining%60)).padStart(2,"0")}</b><button onClick={()=>setRunning(!running)}>{running?<Pause/>:<Play/>}</button></div>}
+
+function Breathing({pattern="calm",close}){const phases=patterns[pattern]||patterns.calm,[idx,setIdx]=useState(0),[elapsed,setElapsed]=useState(0),phase=phases[idx];useEffect(()=>{const id=setInterval(()=>setElapsed(x=>x+1),1000);return()=>clearInterval(id)},[]);useEffect(()=>{const id=setTimeout(()=>setIdx(x=>(x+1)%phases.length),phase[1]*1000);return()=>clearTimeout(id)},[idx]);return <div className="breath-overlay"><button onClick={close}>CLOSE BREATHING âœ•</button><div className={"breath-circle "+phase[0].toLowerCase()}><span>{phase[0]}</span></div><small>{Math.floor(elapsed/60)}:{String(elapsed%60).padStart(2,"0")}</small></div>}
+
+function Environment({go,cfg}){const env=ENV.find(x=>x.id===cfg.id)||ENV[0],audio=useAudio(),[vols,setVols]=useState(env.sounds),[muted,setMuted]=useState(false),[breath,setBreath]=useState(!!cfg.breath),[done,setDone]=useState(false);useEffect(()=>{const a=audio();Object.entries(env.sounds).forEach(([id,v])=>a.start(id,v));return()=>a.stopAll()},[env.id]);return <div className="environment"><Scene type={env.id}/><button className="back" onClick={()=>{audio().stopAll();go("explore")}}><ArrowLeft/> Back</button><h1>{env.name}</h1><div className="settings"><button onClick={()=>setMuted(x=>{audio().mute(!x);return!x})}>{muted?<VolumeX/>:<Volume2/>}</button><button onClick={()=>setBreath(true)}><span>â˜</span> Breathe</button></div>{cfg.dur&&<Timer minutes={cfg.dur} onDone={()=>setDone(true)}/>}<div className="mixer"><div className="mixer-title">SOUND MIXER</div>{Object.entries(vols).map(([id,v])=><label key={id}><span>{SOUNDS.find(s=>s.id===id)?.name}</span><input type="range" min="0" max="100" value={v} onChange={e=>{const n=+e.target.value;setVols({...vols,[id]:n});n?audio().start(id,n):audio().stop(id);audio().vol(id,n)}}/><small>{v}%</small></label>)}</div>{breath&&<Breathing pattern={cfg.breath||"calm"} close={()=>setBreath(false)}/>} {done&&<div className="done"><p>You made space for yourself.</p><small>That was enough. It always is.</small><Btn onClick={()=>setDone(false)}>Stay a little longer</Btn><button onClick={()=>{audio().stopAll();go("home")}}>Return home â†’</button></div>}</div>}
+
+function Soundscape({go}){const audio=useAudio(),[vols,setVols]=useState(()=>{try{return JSON.parse(localStorage.getItem("pause-soundscape")||"{}")}catch{return{}}}),[name,setName]=useState(""),[saved,setSaved]=useState(()=>{try{return JSON.parse(localStorage.getItem("pause-atmospheres")||"[]")}catch{return[]}});const change=(id,v)=>{setVols(x=>({...x,[id]:v}));v?audio().start(id,v):audio().stop(id);audio().vol(id,v);localStorage.setItem("pause-soundscape",JSON.stringify({...vols,[id]:v}))};const save=()=>{const x={name:name||"Atmosphere "+(saved.length+1),vols};const n=[x,...saved].slice(0,12);setSaved(n);localStorage.setItem("pause-atmospheres",JSON.stringify(n));setName("")};return <div className="page"><Nav go={go} view="soundscape"/><main className="content narrow"><h1>Build your atmosphere.</h1><p className="sub">Layer gentle sounds. Keep everything soft enough to let your mind settle.</p><div className="sound-note">Soft by design Â· Start low Â· Let your ears adjust</div><div className="soundbox">{SOUNDS.map(s=><label key={s.id}><span>{s.emoji} {s.name}</span><input type="range" min="0" max="100" value={vols[s.id]||0} onChange={e=>change(s.id,+e.target.value)}/><small>{vols[s.id]||0}%</small></label>)}<div className="save-row"><input value={name} onChange={e=>setName(e.target.value)} placeholder="Name this atmosphereâ€¦"/><Btn ghost onClick={save}>Save atmosphere</Btn></div></div>{saved.length>0&&<div className="saved"><h2>Saved atmospheres</h2>{saved.map((x,i)=><div key={i}><span>{x.name}</span><button onClick={()=>{Object.entries(x.vols).forEach(([id,v])=>change(id,v))}}>Load</button><button onClick={()=>{const n=saved.filter((_,j)=>j!==i);setSaved(n);localStorage.setItem("pause-atmospheres",JSON.stringify(n))}}><Trash2/></button></div>)}</div>}</main><Footer go={go}/></div>}
+
+function Reset({go}){const stages=[["01","Breathe",60,"Follow the circle. Nothing else."],["02","Slow down",90,"There is no rush here."],["03","Notice",60,"Notice the sounds around you."],["04","Let go",60,"You can put it down, just for now."],["05","Return",30,"Come back gently."]],[i,setI]=useState(-1),[r,setR]=useState(60),[running,setRunning]=useState(false);useEffect(()=>{if(i<0||!running)return;const id=setInterval(()=>setR(x=>{if(x<=1){clearInterval(id);if(i===4){setI(5);setRunning(false);return 0}setI(i+1);return stages[i+1][2]}return x-1}),1000);return()=>clearInterval(id)},[i,running]);if(i===5)return <div className="center"><p className="serif big">You made space for yourself.</p><Btn onClick={()=>{setI(-1);setR(60)}}>Again</Btn><button onClick={()=>go("home")}>Return home â†’</button></div>;if(i<0)return <div className="page"><Nav go={go}/><main className="center content"><h1>5-Minute Reset</h1><p className="sub">You don't need to fix everything right now.</p><div className="stage-list">{stages.map(s=><div key={s[0]}><b>{s[0]}</b><span>{s[1]}</span><small>{s[2]}s</small></div>)}</div><Btn onClick={()=>{setI(0);setR(60);setRunning(true)}}>Begin</Btn></main></div>;const s=stages[i];return <div className="center reset-live"><button className="back" onClick={()=>go("home")}><ArrowLeft/> Exit</button><div className="progress-ring"><span>{s[0]} Â· {s[1].toUpperCase()}<b>{Math.floor(r/60)}:{String(r%60).padStart(2,"0")}</b></span></div><p>{s[3]}</p><div><Btn ghost onClick={()=>setRunning(x=>!x)}>{running?<Pause/>:<Play/>}{running?"Pause":"Resume"}</Btn><Btn ghost onClick={()=>setR(0)}>Skip <SkipForward/></Btn></div></div>}
+
+function Unload({go}){const[text,setText]=useState(""),[done,setDone]=useState(false),[cat,setCat]=useState(null),cats=["Something I can control","Something I cannot control","Something I need to remember","Something I can let go"];return <div className="page"><Nav go={go}/><main className="content narrow"><h1>What's taking up space in your mind?</h1>{!done?<><textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Write anything. Nobody is judging you."/><p className="privacy">Your writing stays on this device.</p><Btn disabled={!text.trim()} onClick={()=>setDone(true)}>I'm done writing</Btn></>:!cat?<><div className="message serif">You don't have to solve everything tonight.<small>Some things can wait.<br/>Take one slow breath.</small></div><p className="eyebrow">SEPARATE IT</p><div className="catgrid">{cats.map(c=><button key={c} onClick={()=>{setCat(c);const old=JSON.parse(localStorage.getItem("pause-unload")||"[]");localStorage.setItem("pause-unload",JSON.stringify([...old,{text,cat:c,at:Date.now()}]))}}>{c}</button>)}</div></>:<div className="message"><p>Set down gently. âœ³</p><small>Filed under "{cat}".</small><Btn onClick={()=>go("reset")}>Try a 5-minute reset</Btn></div>}</main><Footer go={go}/></div>}
+
+function Games({go}){
+ const[game,setGame]=useState("bubbles"),[bubbles,setBubbles]=useState([]),[stars,setStars]=useState([]),[plant,setPlant]=useState(0),[flowerType,setFlowerType]=useState(null);
+ useEffect(()=>{if(game!=="bubbles")return;const id=setInterval(()=>setBubbles(x=>[...x.slice(-12),{id:Date.now(),left:Math.random()*85,size:40+Math.random()*55}]),1500);return()=>clearInterval(id)},[game]);
+ const addStar=e=>{if(e.target.closest("button"))return;const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width)*100;const y=((e.clientY-r.top)/r.height)*100;setStars(prev=>[...prev,{x,y,id:Date.now()+Math.random()}])};
+ const FLOWERS=[
+  {id:"rose",name:"Rose",emoji:"ðŸŒ¹",note:"A soft rose, grown slowly."},
+  {id:"sunflower",name:"Sunflower",emoji:"ðŸŒ»",note:"A warm sunflower reaching for light."},
+  {id:"lotus",name:"Lotus",emoji:"ðŸª·",note:"A quiet lotus opening on still water."},
+  {id:"tulip",name:"Tulip",emoji:"ðŸŒ·",note:"A simple tulip unfolding gently."},
+  {id:"daisy",name:"Daisy",emoji:"ðŸŒ¼",note:"A small daisy, bright and calm."},
+  {id:"lavender",name:"Lavender",emoji:"ðŸ’œ",note:"A fragrant lavender stem settling the mind."},
+  {id:"cherry",name:"Cherry Blossom",emoji:"ðŸŒ¸",note:"A delicate cherry blossom in bloom."}
+ ];
+ const selectedFlower=FLOWERS.find(x=>x.id===flowerType);
+ const resetPlant=()=>{setPlant(0);setFlowerType(null)};
+ const plantStage=plant===0?"seed":plant===1?"sprout":plant===2?"leaves":plant===3?"bud":"bloom";
+ const plantHeight=plant===0?18:plant===1?62:plant===2?108:plant===3?150:185;
+ const constellationLines=[];
+ stars.forEach((star,i)=>{if(i===0)return;const previous=stars[i-1];const key=`path-${i}`;const exists=constellationLines.some(l=>l.key===key);if(!exists)constellationLines.push({a:previous,b:star,key});if(i>1){const nearest=stars.slice(0,i-1).map((st,j)=>({s:st,j,d:(st.x-star.x)**2+(st.y-star.y)**2})).sort((a,b)=>a.d-b.d)[0];if(nearest&&nearest.d<2600){const nearKey=`near-${i}-${nearest.j}`;if(!constellationLines.some(l=>l.key===nearKey))constellationLines.push({a:nearest.s,b:star,key:nearKey})}}});
+ return <div className="page"><Nav go={go}/><main className="content narrow"><h1>Play Without Winning</h1><p className="sub">Games that don't ask you to win.</p><div className="tabs">{["bubbles","sky","plant"].map(x=><button className={game===x?"active":""} onClick={()=>setGame(x)} key={x}>{x==="bubbles"?"Bubbles":x==="sky"?"Night Sky":"Growing Plant"}</button>)}</div><div className="gamebox">
+ {game==="bubbles"&&bubbles.map(b=><button className="bubble" key={b.id} style={{left:b.left+"%",width:b.size,height:b.size}} onClick={()=>setBubbles(x=>x.filter(q=>q.id!==b.id))}/>)}
+ {game==="bubbles"&&<p>Tap the bubbles. Let them go.</p>}
+ {game==="sky"&&<div className="sky" onClick={addStar}>
+  {stars.length>1&&<svg className="constellation-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{constellationLines.map(l=><line key={l.key} x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y}/>)}</svg>}
+  {stars.map(s=><i key={s.id} style={{left:s.x+"%",top:s.y+"%"}}/>)}
+  {stars.length===0&&<p>Click anywhere to place a star.</p>}
+  {stars.length>0&&<button className="clear-stars" onClick={e=>{e.stopPropagation();setStars([])}}>Clear sky</button>}
+ </div>}
+ {game==="plant"&&!flowerType&&<div className="plant-choice"><div><span className="eyebrow">CHOOSE YOUR FLOWER</span><h2>What would you like to grow?</h2><p>Pick one. Then give it a little time and water.</p></div><div className="flower-options">{FLOWERS.map(f=><button key={f.id} onClick={()=>{setFlowerType(f.id);setPlant(0)}}><span>{f.emoji}</span><b>{f.name}</b><small>{f.note}</small></button>)}</div></div>}
+ {game==="plant"&&flowerType&&<div className={"plant-stage "+plantStage+" flower-"+flowerType}>
+  <div className="plant" style={{height:plantHeight+"px"}}/>
+  <div className="leaf leaf-left"/><div className="leaf leaf-right"/>
+  <div className="flower" style={{bottom:(104+plantHeight-18)+"px"}}><i/><i/><i/><i/><i/><b/></div>
+  <div className="plant-copy"><strong>{selectedFlower.name}</strong><p>{plantStage==="bloom"?"Itâ€™s grown. Let it stay a while.":plantStage==="bud"?"The bud is almost ready to open.":"Give it another little drink."}</p></div>
+  <button onClick={()=>plant>=4?resetPlant():setPlant(x=>Math.min(4,x+1))}><span>{plant>=4?"ðŸŒ± Grow another":"ðŸ’§ Water"}</span></button>
+ </div>}
+ </div></main><Footer go={go}/></div>}
+
+function Sleep({go}){const audio=useAudio(),[dur,setDur]=useState(20),[running,setRunning]=useState(false),[remaining,setRemaining]=useState(0);const begin=()=>{const a=audio();a.mute(false);a.stopAll();a.start("rain",55);a.start("wind",30);a.start("ambient",25);setRemaining(dur*60);setRunning(true)};useEffect(()=>{if(!running)return;const id=setInterval(()=>setRemaining(x=>{if(x<=1){clearInterval(id);audio().stopAll();setRunning(false);return 0}if(x<=120)audio().mute(true);return x-1}),1000);return()=>clearInterval(id)},[running]);return <div className="page sleep"><Scene type="moon"/><Nav go={go}/><main className="content narrow"><h1>Nothing else needs your attention tonight.</h1><p className="sub">Sound fades gently before the end.</p>{!running?<><div className="choices">{[20,30,45,60,90].map(x=><button className={dur===x?"active":""} onClick={()=>setDur(x)} key={x}>{x} min</button>)}</div><Btn onClick={begin}>Begin</Btn></>:<><div className="sleep-timer">{Math.floor(remaining/60)}:{String(remaining%60).padStart(2,"0")}</div><p>{remaining<120?"Fading out gentlyâ€¦":"Let go of the day."}</p><Btn ghost onClick={()=>{audio().stopAll();setRunning(false)}}>Stop</Btn></>}</main></div>}
+
+function Privacy({go}){return <div className="page"><Nav go={go}/><main className="content narrow legal"><span className="eyebrow">PRIVACY</span><h1>Your quiet space stays quiet.</h1><p>PAUSE is designed to work without an account. Journal entries, saved atmospheres and preferences are stored locally in your browser unless a future version explicitly says otherwise.</p><h2>What PAUSE stores</h2><p>The current site may use browser localStorage for your saved atmospheres and Unload entries. These are kept on your device and are not sent to a PAUSE server.</p><h2>Audio</h2><p>Some soundscapes use third-party hosted audio from Mixkit. Your browser requests those audio files directly when you start a sound. Review the provider's current terms before commercial redistribution of the audio assets.</p><h2>Sharing</h2><p>The Share button opens your device's native sharing sheet when supported. Otherwise it copies the current page URL to your clipboard.</p><h2>Contact</h2><p>This is an MVP privacy notice, not legal advice. Add your business contact details here before collecting analytics, accounts, payments, email addresses or other personal data.</p><p className="updated">Last updated: September 2026</p></main><Footer go={go}/></div>}
+
+function About({go}){return <div className="page"><Nav go={go}/><main className="content narrow center"><h1>Why PAUSE?</h1><div className="about"><p>The internet is designed to keep you moving.</p><p>PAUSE was designed to give you somewhere to stop.</p><p>No endless scrolling.<br/>No notifications.<br/>No pressure.</p><p>Just a few quiet minutes for yourself.</p></div><Btn onClick={()=>go("feelings")}>Find my calm</Btn><div className="credits"><p>Some ambience tracks use Mixkit sound effects under the Mixkit license. <a href="https://mixkit.co/license/" target="_blank" rel="noreferrer">View license <ExternalLink size={13}/></a></p></div></main><Footer go={go}/></div>}
+
+function App(){const[view,setView]=useState("home"),[cfg,setCfg]=useState({id:"rainy"});const go=v=>{setView(v);scrollTo(0,0)};const start=(id,dur,breath)=>{setCfg({id,dur,breath});setView("environment")};useEffect(()=>{document.title=view==="home"?"PAUSE â€” A Small Place to Breathe":"PAUSE Â· "+view},[view]);return <>{view==="home"&&<Home go={go}/>} {view==="feelings"&&<Feelings go={go} start={start}/>} {view==="explore"&&<Explore go={go} start={start}/>} {view==="environment"&&<Environment go={go} cfg={cfg}/>} {view==="soundscape"&&<Soundscape go={go}/>} {view==="reset"&&<Reset go={go}/>} {view==="unload"&&<Unload go={go}/>} {view==="games"&&<Games go={go}/>} {view==="sleep"&&<Sleep go={go}/>} {view==="about"&&<About go={go}/>} {view==="privacy"&&<Privacy go={go}/>}</>}
+createRoot(document.getElementById("root")).render(<App/>);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
