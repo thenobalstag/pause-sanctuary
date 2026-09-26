@@ -1,6 +1,7 @@
-﻿import React, {useEffect, useMemo, useRef, useState} from "react";
+import React, {useEffect, useMemo, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {Menu, X, ArrowLeft, Volume2, VolumeX, Pause, Play, SkipForward, Trash2, Share2, Check, ExternalLink} from "lucide-react";
+import {SpeedInsights} from "@vercel/speed-insights/react";
 import "./styles.css";
 
 const C={bg:"#171717",panel:"#1D1B18",panel2:"#232019",text:"#F5F1E8",beige:"#D8CDBD",gold:"#C9A96A",dim:"#8a8378"};
@@ -441,34 +442,5 @@ function Privacy({go}){return <div className="page"><Nav go={go}/><main classNam
 
 function About({go}){return <div className="page"><Nav go={go}/><main className="content narrow center"><h1>Why PAUSE?</h1><div className="about"><p>The internet is designed to keep you moving.</p><p>PAUSE was designed to give you somewhere to stop.</p><p>No endless scrolling.<br/>No notifications.<br/>No pressure.</p><p>Just a few quiet minutes for yourself.</p></div><Btn onClick={()=>go("feelings")}>Find my calm</Btn><div className="credits"><p>Some ambience tracks use Mixkit sound effects under the Mixkit license. <a href="https://mixkit.co/license/" target="_blank" rel="noreferrer">View license <ExternalLink size={13}/></a></p></div></main><Footer go={go}/></div>}
 
-function App(){useEffect(()=>{const u=new URL(window.location.href);[...u.searchParams.keys()].filter(k=>k.toLowerCase().startsWith("utm_")).forEach(k=>u.searchParams.delete(k));window.history.replaceState({},document.title,u.pathname+(u.search?u.search:"")+(u.hash||""))},[]);const[view,setView]=useState("home"),[cfg,setCfg]=useState({id:"rainy"});const go=v=>{setView(v);scrollTo(0,0)};const start=(id,dur,breath)=>{setCfg({id,dur,breath});setView("environment")};useEffect(()=>{document.title=view==="home"?"PAUSE — A Small Place to Breathe":"PAUSE · "+view},[view]);return <>{view==="home"&&<Home go={go}/>} {view==="feelings"&&<Feelings go={go} start={start}/>} {view==="explore"&&<Explore go={go} start={start}/>} {view==="environment"&&<Environment go={go} cfg={cfg}/>} {view==="soundscape"&&<Soundscape go={go}/>} {view==="reset"&&<Reset go={go}/>} {view==="unload"&&<Unload go={go}/>} {view==="games"&&<Games go={go}/>} {view==="sleep"&&<Sleep go={go}/>} {view==="about"&&<About go={go}/>} {view==="privacy"&&<Privacy go={go}/>}</>}
+function App(){useEffect(()=>{const u=new URL(window.location.href);[...u.searchParams.keys()].filter(k=>k.toLowerCase().startsWith("utm_")).forEach(k=>u.searchParams.delete(k));window.history.replaceState({},document.title,u.pathname+(u.search?u.search:"")+(u.hash||""))},[]);const[view,setView]=useState("home"),[cfg,setCfg]=useState({id:"rainy"});const go=v=>{setView(v);scrollTo(0,0)};const start=(id,dur,breath)=>{setCfg({id,dur,breath});setView("environment")};useEffect(()=>{document.title=view==="home"?"PAUSE — A Small Place to Breathe":"PAUSE · "+view},[view]);return <>{view==="home"&&<Home go={go}/>} {view==="feelings"&&<Feelings go={go} start={start}/>} {view==="explore"&&<Explore go={go} start={start}/>} {view==="environment"&&<Environment go={go} cfg={cfg}/>} {view==="soundscape"&&<Soundscape go={go}/>} {view==="reset"&&<Reset go={go}/>} {view==="unload"&&<Unload go={go}/>} {view==="games"&&<Games go={go}/>} {view==="sleep"&&<Sleep go={go}/>} {view==="about"&&<About go={go}/>} {view==="privacy"&&<Privacy go={go}/>}<SpeedInsights /></>}
 createRoot(document.getElementById("root")).render(<App/>);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
